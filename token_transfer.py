@@ -32,9 +32,11 @@ class TrieNode:
         assert child.char not in self.children and child.char is not None
         self.children[child.char] = child
 
-    def pprint_node(
-        self, indents: Optional[List[int]] = None, flag: bool = False, compact=True
+    def pprint(
+        self, indents: Optional[List[int]] = None, flag: bool = False, compact=True, depth=None
     ):
+        if depth == 0:
+            return
         if indents is None:
             indents = [0]
 
@@ -43,6 +45,8 @@ class TrieNode:
         char_string = str(self.char)
         if self.char == "\n":
             char_string = "\\n"
+        if self.char == "\t":
+            char_string = "\\t"
         if self.char == " ":
             char_string = "' '"
         print(indent_string + f"{char_string} {info_string}")
@@ -53,7 +57,7 @@ class TrieNode:
         else:
             indents[-1] += 1 + width
         for child in sorted(self.children.values(), key=lambda x: -(x.prob or 0)):
-            child.pprint_node(indents, len(self.children) > 1)
+            child.pprint(indents, len(self.children) > 1, depth=depth-1 if depth is not None else None)
 
     def __contains__(self, string: str) -> bool:
         if not len(string):
@@ -98,7 +102,7 @@ def _add_probs(root: TrieNode, probs: List[Tuple[str, float]]):
 
     if not all([token in root for token in tokens]):
         print([token for token in tokens if token not in root])
-        root.pprint_node()
+        root.pprint()
         raise AssertionError
 
     chars = set([_chars_or_special(token)[0] for token in tokens])
@@ -114,16 +118,54 @@ def _add_probs(root: TrieNode, probs: List[Tuple[str, float]]):
         _add_probs(root.children[char], cut_subset)
 
 
+def _merge_trees(first: TrieNode, second: TrieNode, first_base_prob: float, second_base_prob: float):
+    assert first.char == second.char
+    assert second.prob is not None
+    assert first.prob is not None
+    original_first_prob = first.prob
+    first.prob = first_base_prob * first.prob + second_base_prob * second.prob
+    for key in set().union(first.children, second.children):
+        if key in first.children and key in second.children:
+            sbp = second_base_prob * second.prob
+            fbp = original_first_prob * first_base_prob 
+            _merge_trees(first.children[key], second.children[key], fbp, sbp)
+            first.children[key].prob /= first.prob
+        elif key in first.children:
+            child = first.children[key]
+            assert child.prob is not None
+            child.prob = (child.prob * original_first_prob)/first.prob
+        elif key in second.children:
+            child = second.children[key]
+            assert child.prob is not None
+            child.prob = (child.prob * second.prob * second_base_prob) / first.prob
+            first.add_child(child)
+        
+    
+
 def _fold_trivial_empty_nodes(node: TrieNode):
     if EMPTY_NODE_KEY in node.children:
         empty_node = node.children[EMPTY_NODE_KEY]
         empty_node_prob = empty_node.prob
         assert empty_node_prob is not None
-        if empty_node_prob == 1.0:
+        if empty_node_prob == 1.:
+            for key, empty_node_child in empty_node.children.items():
+                #assert key not in node.children and empty_node_child.prob is not None
+                node.add_child(empty_node_child)
+        else:
+            keys_to_merge = []
+            for key, empty_node_child in empty_node.children.items():
+                if key in node.children:
+                    keys_to_merge.append(key)
+
+            for key in keys_to_merge:
+                _merge_trees(node.children[key], empty_node.children[key], 1., empty_node_prob)
+                del empty_node.children[key]
+
             for key, child in empty_node.children.items():
-                assert key not in node.children and child.prob is not None
-                node.add_child(child)
-            del node.children[EMPTY_NODE_KEY]
+                if key not in keys_to_merge:
+                    child.prob *= empty_node_prob
+                    node.add_child(child)
+        del node.children[EMPTY_NODE_KEY]
     for child in node.children.values():
         _fold_trivial_empty_nodes(child)
 
@@ -131,7 +173,6 @@ def _fold_trivial_empty_nodes(node: TrieNode):
 def _combine_tries(
     root: TrieNode, tries: List[TrieNode], source_tokens: List[str]
 ) -> None:
-    # Attach the tries together according to the actual sequence.
     cur = root.get_string(source_tokens[0])
     for i, token in enumerate(source_tokens[1:]):
         trie = tries[i]
@@ -163,7 +204,6 @@ def build_prob_trie(
         tries.append(trie)
 
     _combine_tries(root, tries, source_tokens)
-    _fold_trivial_empty_nodes(root)
     return root
 
 
@@ -201,16 +241,26 @@ def token_transfer(
         print("Source tokens", "|".join(source_tokens))
         print("Target tokens", "|".join(target_tokens))
         print(f"{string=}")
-        root.pprint_node()
-
+        root.pprint()
     cur = root
+    print('Printing root.')
+    root.pprint(depth=30)
+    _fold_trivial_empty_nodes(root)
+    root.pprint(depth=30)
+
     target_token_log_probs = []
     for i, token in enumerate(target_tokens):
         log_p = 0.0
+        #print(f'{token=}')
+        #print(f'{len(token)=}')
         for s in _chars_or_special(token):
+            #print(f'{s=}')
             if s in cur.children:
                 cur = cur.children[s]
             else:
+                if EMPTY_NODE_KEY not in cur.children:
+                    print(f"Failure. {cur.children.keys()=} {cur.char=} {cur.prob=}")
+                    cur.pprint(depth=6)
                 log_p += cur.children[EMPTY_NODE_KEY].log_prob
                 cur = cur.children[EMPTY_NODE_KEY].children[s]
             assert cur.log_prob is not None
