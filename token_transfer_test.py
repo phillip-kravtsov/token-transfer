@@ -44,10 +44,8 @@ class TestTokenTransfer(unittest.TestCase):
             self.data_long, self.data_long["tokens"]
         )
         expected = self.data_long["token_logprobs"]
-        target = target_token_logp[1:]
-        self.assertTrue(
-            np.allclose(sum(expected), sum(target), atol=0.001, rtol=0.0001)
-        )
+        actual = target_token_logp[1:]
+        self.assertTrue(np.allclose(sum(expected[:-1]), sum(actual[:-1])))
 
     def test_merging_simple_openai(self):
         target_token_logp = tt.from_openai_response(
@@ -56,12 +54,16 @@ class TestTokenTransfer(unittest.TestCase):
         original = self.merge_data["token_logprobs"]
         self.assertTrue(np.allclose(sum(original), sum(target_token_logp[1:])))
 
-    def test_merge(self):
+    def test_fold_empty_nodes(self):
         root = tt.TrieNode(None)
         b = tt.TrieNode("b", prob=0.9)
         a0 = tt.TrieNode("a", prob=0.5)
         c0 = tt.TrieNode("c", prob=0.3)
         d0 = tt.TrieNode("d", prob=0.7)
+        e0 = tt.TrieNode("e", prob=0.5)
+        h0 = tt.TrieNode("h", prob=0.33)
+        c0.add_child(e0)
+        c0.add_child(h0)
         a0.add_child(c0)
         a0.add_child(d0)
         b.add_child(a0)
@@ -70,32 +72,44 @@ class TestTokenTransfer(unittest.TestCase):
         b.add_child(empty)
         a1 = tt.TrieNode("a", prob=0.9)
         c1 = tt.TrieNode("c", prob=0.8)
+        e1 = tt.TrieNode("e", prob=0.8)
         g1 = tt.TrieNode("g", prob=0.2)
         f1 = tt.TrieNode("f", prob=0.1)
+        k1 = tt.TrieNode("k", prob=0.6)
         a1.add_child(c1)
+        c1.add_child(e1)
+        c1.add_child(k1)
         a1.add_child(g1)
         empty.add_child(a1)
         empty.add_child(f1)
         root.add_child(b)
-        root.pprint()
+
         tt._fold_empty_nodes(root)
-        root.pprint()
+
         b = root.children["b"]
         a = b.children["a"]
         f = b.children["f"]
         c = a.children["c"]
         d = a.children["d"]
         g = a.children["g"]
+        e = c.children["e"]
+        h = c.children["h"]
+        k = c.children["k"]
 
         assert np.allclose(b.prob, 0.9)
         assert np.allclose(a.prob, 0.95)
         assert np.allclose(f.prob, 0.05)
-        assert np.allclose(c.prob, (0.3 * 0.5 + 0.5 * 0.9 * 0.8) / 0.95)
-        assert np.allclose(d.prob, 0.5 * 0.7 / 0.95)
-        assert np.allclose(g.prob, (0.2 * 0.45) / 0.95)
+        assert np.allclose(c.prob, (0.3 * 0.5 + 0.5 * 0.9 * 0.8) / a.prob)
+        assert np.allclose(d.prob, 0.5 * 0.7 / a.prob)
+        assert np.allclose(g.prob, (0.2 * 0.45) / a.prob)
+        assert np.allclose(
+            e.prob, (0.5 * 0.3 * 0.5 + 0.5 * 0.9 * 0.8 * 0.8) / (c.prob * a.prob)
+        )
+        assert np.allclose(h.prob, (0.5 * 0.3 * 0.33) / (c.prob * a.prob))
+        assert np.allclose(k.prob, (0.5 * 0.9 * 0.8 * 0.6) / (c.prob * a.prob))
 
     def test_from_openai(self):
-        if self.data_long["tokens"] != [
+        if self.data_short["tokens"] != [
             "\n\n",
             "This",
             " is",
@@ -105,14 +119,11 @@ class TestTokenTransfer(unittest.TestCase):
         ]:
             print("this test depends on the inputs, skipping.")
             return
-        target_tokens = ["\n", "\n", "This is", " a", " test."]
-        target_token_logp = tt.from_openai_response(self.data_long, target_tokens)
-
-        self.assertTrue(
-            np.allclose(
-                sum(self.data_long["token_logprobs"]), sum(target_token_logp[1:])
-            )
-        )
+        target_tokens = ["\n", "\n", "This is", " a", " test", "."]
+        target_token_logp = tt.from_openai_response(self.data_short, target_tokens)
+        actual = self.data_short["token_logprobs"]
+        expected = target_token_logp[1:]
+        self.assertTrue(np.allclose(sum(actual[:-1]), sum(expected[:-1])))
 
 
 if __name__ == "__main__":

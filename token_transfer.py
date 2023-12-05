@@ -45,7 +45,7 @@ class TrieNode:
             indents = [0]
 
         indent_string = "|".join([" " * indent for indent in indents])
-        info_string = f"{self.prob:.4f}" if self.prob is not None else ""
+        info_string = f"{self.prob:.6f}" if self.prob is not None else ""
         char_string = str(self.char)
         if self.char == "\n":
             char_string = "\\n"
@@ -108,10 +108,7 @@ def _add_probs(root: TrieNode, probs: List[Tuple[str, float]]):
             root.add_child(TrieNode(EMPTY_NODE_KEY, prob=prob))
     tokens = [token for token in tokens if len(token)]
 
-    if not all([token in root for token in tokens]):
-        print([token for token in tokens if token not in root])
-        root.pprint()
-        raise AssertionError
+    assert all([token in root for token in tokens])
 
     chars = set([_chars_or_special(token)[0] for token in tokens])
     for char in chars:
@@ -159,7 +156,10 @@ def _merge_trees(
             child = first.children[key]
             assert child.prob is not None
             child.prob = np.exp(
-                child.log_prob + original_first_log_prob - first.log_prob
+                child.log_prob
+                + original_first_log_prob
+                + first_base_log_prob
+                - first.log_prob
             )
 
         elif key in second.children:
@@ -277,6 +277,8 @@ def token_transfer(
         root.pprint()
     cur = root
     _fold_empty_nodes(root)
+    if verbose:
+        root.pprint()
 
     target_token_log_probs = []
     for i, token in enumerate(target_tokens):
@@ -307,7 +309,9 @@ def token_transfer(
     return target_token_log_probs
 
 
-def from_openai_response(response_logprobs, target_tokens: List[str]) -> List[float]:
+def from_openai_response(
+    response_logprobs, target_tokens: List[str], verbose: bool = False
+) -> List[float]:
     source_tokens: List[str] = ["<bos>"] + response_logprobs["tokens"]
     target_tokens = ["<bos>"] + target_tokens[:]
     probs_struct: List[List[Tuple[str, float]]] = []
@@ -315,5 +319,7 @@ def from_openai_response(response_logprobs, target_tokens: List[str]) -> List[fl
         probs_struct.append(
             [(tok, np.exp(lp)) for tok, lp in response_token_logprobs.items()]
         )
-    target_logp = token_transfer(source_tokens, target_tokens, probs_struct)
+    target_logp = token_transfer(
+        source_tokens, target_tokens, probs_struct, verbose=verbose
+    )
     return target_logp
