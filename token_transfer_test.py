@@ -1,66 +1,15 @@
 import token_transfer as tt
 import unittest
+import json
 import numpy as np
-
-data = {
-    "tokens": ["\n\n", "This", " is", " a", " test", "."],
-    "token_logprobs": [
-        -0.86915743,
-        -0.35828337,
-        -0.008103862,
-        -0.00550173,
-        -0.0014032064,
-        -0.06300423,
-    ],
-    "top_logprobs": [
-        {
-            "\n\n": -0.86915743,
-            "\n": -1.5560223,
-            " string": -3.156324,
-            " sentence": -3.2896361,
-            " of": -3.7075934,
-        },
-        {
-            "This": -0.35828337,
-            "\n": -1.847051,
-            "\n\n": -3.0329373,
-            " This": -4.944918,
-            "I": -4.9773717,
-        },
-        {
-            " is": -0.008103862,
-            " sentence": -5.2877955,
-            "\n": -7.06451,
-            " statement": -7.886844,
-            "\n\n": -8.535557,
-        },
-        {
-            " a": -0.00550173,
-            " just": -6.2743807,
-            " an": -6.3107214,
-            " only": -7.745223,
-            " not": -8.000508,
-        },
-        {
-            " test": -0.0014032064,
-            " sentence": -7.599525,
-            " ": -8.814065,
-            " te": -8.949878,
-            " sample": -9.242383,
-        },
-        {
-            ".": -0.06300423,
-            ".\n": -3.285281,
-            "<|endoftext|>": -4.3656716,
-            " ": -5.737307,
-            ",": -5.822476,
-        },
-    ],
-    "text_offset": [18, 20, 24, 27, 29, 34],
-}
 
 
 class TestTokenTransfer(unittest.TestCase):
+    def setUp(self) -> None:
+        with open("test-data.json", "r") as f:
+            self.data = json.load(f)
+        return super().setUp()
+
     def test_token_transfer(self):
         source_tokens = ["whe", "rever", "_cou", "ld", "<eos>"]
         target_tokens = ["wh", "er", "ever", "_co", "uld", "<eos>"]
@@ -86,11 +35,11 @@ class TestTokenTransfer(unittest.TestCase):
         assert np.allclose(np.sum(target_token_log_probs), np.sum(source_log_probs))
 
     def test_from_openai_identity(self):
-        target_token_logp = tt.from_openai_response(data, data["tokens"])
-        self.assertTrue(np.allclose(data["token_logprobs"], target_token_logp[1:]))
+        target_token_logp = tt.from_openai_response(self.data, self.data["tokens"])
+        self.assertTrue(np.allclose(self.data["token_logprobs"], target_token_logp[1:]))
 
     def test_from_openai(self):
-        assert data["tokens"] == [
+        assert self.data["tokens"] == [
             "\n\n",
             "This",
             " is",
@@ -99,10 +48,10 @@ class TestTokenTransfer(unittest.TestCase):
             ".",
         ], "this test depends on the inputs"
         target_tokens = ["\n", "\n", "This is", " a", " test."]
-        target_token_logp = tt.from_openai_response(data, target_tokens)
+        target_token_logp = tt.from_openai_response(self.data, target_tokens)
 
         self.assertTrue(
-            np.allclose(sum(data["token_logprobs"]), sum(target_token_logp[1:]))
+            np.allclose(sum(self.data["token_logprobs"]), sum(target_token_logp[1:]))
         )
 
 
