@@ -6,11 +6,11 @@ import numpy as np
 
 class TestTokenTransfer(unittest.TestCase):
     def setUp(self) -> None:
-        with open("test-data-1.json", "r") as f:
+        with open("test-data/test-data-1.json", "r") as f:
             self.data_short = json.load(f)
-        with open("test-data-2.json", "r") as f:
+        with open("test-data/test-data-2.json", "r") as f:
             self.data_long = json.load(f)
-        with open("test-merge.json", "r") as f:
+        with open("test-data/test-merge.json", "r") as f:
             self.merge_data = json.load(f)
 
         return super().setUp()
