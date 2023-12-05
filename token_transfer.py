@@ -45,14 +45,10 @@ class TrieNode:
             indents = [0]
 
         indent_string = "|".join([" " * indent for indent in indents])
-        info_string = f"{self.prob:.6f}" if self.prob is not None else ""
-        char_string = str(self.char)
-        if self.char == "\n":
-            char_string = "\\n"
-        if self.char == "\t":
-            char_string = "\\t"
-        if self.char == " ":
-            char_string = "' '"
+        info_string = f"{self.prob:.4f}" if self.prob is not None else ""
+        char_string = {"\n": "\\n", "\t": "\\t", " ": "' '"}.get(
+            self.char, str(self.char)
+        )
         print(indent_string + f"{char_string} {info_string}")
         indents = indents[:]
         width = 1 if compact else len(char_string)
@@ -133,6 +129,7 @@ def _merge_trees(
     Mutates `first` to be the merge of the trie nodes.
     first_base_prob and second_base_prob indicate the likelihood of the sequence before
     the first and second nodes respectively.
+    Caller is responsible for cleaning up `second`.
     """
     assert first.char == second.char
     assert second.prob is not None
@@ -275,36 +272,24 @@ def token_transfer(
         print("Target tokens", "|".join(target_tokens))
         print(f"{string=}")
         root.pprint()
-    cur = root
     _fold_empty_nodes(root)
     if verbose:
         root.pprint()
 
     target_token_log_probs = []
-    for i, token in enumerate(target_tokens):
+    cur = root
+    for token in target_tokens:
         log_p = 0.0
         for s in _chars_or_special(token):
             if s in cur.children:
                 cur = cur.children[s]
             else:
                 if EMPTY_NODE_KEY not in cur.children:
-                    print(f"Failure. {cur.children.keys()=} {cur.char=} {cur.prob=}")
                     cur.pprint(depth=6)
                     raise AssertionError
                 log_p += cur.children[EMPTY_NODE_KEY].log_prob
                 cur = cur.children[EMPTY_NODE_KEY].children[s]
-            assert cur.log_prob is not None
             log_p += cur.log_prob
-        # If there is an empty node and the target tokenizer splits the
-        # previous token in the same way, then allocate the empty node
-        # probability to the previous token.
-        if EMPTY_NODE_KEY in cur.children:
-            if (
-                i == len(target_tokens) - 1
-                or _chars_or_special(target_tokens[i + 1])[0] not in cur.children
-            ):
-                cur = cur.children[EMPTY_NODE_KEY]
-                log_p += cur.log_prob
         target_token_log_probs.append(log_p)
     return target_token_log_probs
 

@@ -120,7 +120,9 @@ class TestTokenTransfer(unittest.TestCase):
             print("this test depends on the inputs, skipping.")
             return
         target_tokens = ["\n", "\n", "This is", " a", " test", "."]
-        target_token_logp = tt.from_openai_response(self.data_short, target_tokens)
+        target_token_logp = tt.from_openai_response(
+            self.data_short, target_tokens, verbose=True
+        )
         actual = self.data_short["token_logprobs"]
         expected = target_token_logp[1:]
         self.assertTrue(np.allclose(sum(actual[:-1]), sum(expected[:-1])))
