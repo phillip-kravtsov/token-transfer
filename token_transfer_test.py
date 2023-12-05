@@ -1,6 +1,7 @@
-from token_transfer import token_transfer, from_openai
+import token_transfer as tt
 import unittest
 import numpy as np
+
 data = {
     "tokens": ["\n\n", "This", " is", " a", " test", "."],
     "token_logprobs": [
@@ -58,6 +59,7 @@ data = {
     "text_offset": [18, 20, 24, 27, 29, 34],
 }
 
+
 class TestTokenTransfer(unittest.TestCase):
     def test_token_transfer(self):
         source_tokens = ["whe", "rever", "_cou", "ld", "<eos>"]
@@ -80,12 +82,29 @@ class TestTokenTransfer(unittest.TestCase):
             stp = [st[1] for st in source_token_probs if st[0] == source_token]
             assert len(stp) == 1
             source_log_probs.append(np.log(stp[0]))
-        target_token_log_probs = token_transfer(source_tokens, target_tokens, probs)
+        target_token_log_probs = tt.token_transfer(source_tokens, target_tokens, probs)
         assert np.allclose(np.sum(target_token_log_probs), np.sum(source_log_probs))
 
-    def test_from_openai(self):
-        target_token_logp = from_openai(data, data['tokens'])
-        self.assertTrue(np.allclose(data['token_logprobs'], target_token_logp[1:]))
+    def test_from_openai_identity(self):
+        target_token_logp = tt.from_openai_response(data, data["tokens"])
+        self.assertTrue(np.allclose(data["token_logprobs"], target_token_logp[1:]))
 
-if __name__ == '__main__':
+    def test_from_openai(self):
+        assert data["tokens"] == [
+            "\n\n",
+            "This",
+            " is",
+            " a",
+            " test",
+            ".",
+        ], "this test depends on the inputs"
+        target_tokens = ["\n", "\n", "This is", " a", " test."]
+        target_token_logp = tt.from_openai_response(data, target_tokens)
+
+        self.assertTrue(
+            np.allclose(sum(data["token_logprobs"]), sum(target_token_logp[1:]))
+        )
+
+
+if __name__ == "__main__":
     unittest.main()

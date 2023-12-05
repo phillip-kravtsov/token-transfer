@@ -32,7 +32,9 @@ class TrieNode:
         assert child.char not in self.children and child.char is not None
         self.children[child.char] = child
 
-    def pprint_node(self, indents: Optional[List[int]] = None, flag: bool = False):
+    def pprint_node(
+        self, indents: Optional[List[int]] = None, flag: bool = False, compact=True
+    ):
         if indents is None:
             indents = [0]
 
@@ -41,12 +43,11 @@ class TrieNode:
         char_string = str(self.char)
         if self.char == "\n":
             char_string = "\\n"
-        if self.char == ' ':
+        if self.char == " ":
             char_string = "' '"
         print(indent_string + f"{char_string} {info_string}")
-
         indents = indents[:]
-        width = 1
+        width = 1 if compact else len(char_string)
         if flag:
             indents.append(width)
         else:
@@ -143,15 +144,13 @@ def _combine_tries(
         cur = leaf
 
 
-def build_logmass_trie(
-        source_tokens: List[str],
-        all_probs:List[List[Tuple[str, float]]]
+def build_prob_trie(
+    source_tokens: List[str], all_probs: List[List[Tuple[str, float]]]
 ) -> TrieNode:
     root = TrieNode()
     root.add_string(source_tokens[0])
     _add_probs(root, [(source_tokens[0], 1.0)])
 
-    # Make tries out of each top-k tokens.
     tries: List[TrieNode] = []
     for i, token_probs in enumerate(all_probs):
         tokens = [tp[0] for tp in token_probs]
@@ -175,13 +174,29 @@ def token_transfer(
     verbose=False,
 ) -> List[float]:
     """
-    Returns logprobs for every target token.
+    This function returns the log probabilities for each target token given the source tokens and
+    the top-k log probabilities at each position.
+
+    Args:
+        source_tokens (List[str]): The source tokens.
+        target_tokens (List[str]): The target tokens.
+        all_probs (List[List[Tuple[str, float]]]): The top-k log probabilities at each position.
+        verbose (bool, optional): If True, prints verbose output. Defaults to False.
+
+    Returns:
+        List[float]: The log probabilities for each target token.
+
+    Note:
+        The first element will always be 0.0, as we do not have likelihoods over the beginning of
+        sentence (bos) token. The function expects the beginning of sentence/initial tokens to be
+        passed in since they could, in theory, be tokenized differently by the tokenizer.
+        The all_probs[i] refers to the likelihoods at the source[i+1].
     """
     assert "".join(source_tokens) == "".join(target_tokens)
     string = "".join(source_tokens)
-    assert len(all_probs) == len(source_tokens) - 1, 'Expect source tokens to include bos token'
+    assert len(all_probs) == len(source_tokens) - 1
 
-    root = build_logmass_trie(source_tokens, all_probs)
+    root = build_prob_trie(source_tokens, all_probs)
     if verbose:
         print("Source tokens", "|".join(source_tokens))
         print("Target tokens", "|".join(target_tokens))
@@ -200,15 +215,21 @@ def token_transfer(
                 cur = cur.children[EMPTY_NODE_KEY].children[s]
             assert cur.log_prob is not None
             log_p += cur.log_prob
+        # If there is an empty node and the target tokenizer splits the
+        # previous token in the same way, then allocate the empty node
+        # probability to the previous token.
         if EMPTY_NODE_KEY in cur.children:
-            if i == len(target_tokens) - 1 or _chars_or_special(target_tokens[i+1])[0] not in cur.children:
+            if (
+                i == len(target_tokens) - 1
+                or _chars_or_special(target_tokens[i + 1])[0] not in cur.children
+            ):
                 cur = cur.children[EMPTY_NODE_KEY]
                 log_p += cur.log_prob
         target_token_log_probs.append(log_p)
     return target_token_log_probs
 
 
-def from_openai(response_logprobs, target_tokens: List[str]) -> List[float]:
+def from_openai_response(response_logprobs, target_tokens: List[str]) -> List[float]:
     source_tokens: List[str] = ["<bos>"] + response_logprobs["tokens"]
     target_tokens = ["<bos>"] + target_tokens[:]
     probs_struct: List[List[Tuple[str, float]]] = []
@@ -216,6 +237,5 @@ def from_openai(response_logprobs, target_tokens: List[str]) -> List[float]:
         probs_struct.append(
             [(tok, np.exp(lp)) for tok, lp in response_token_logprobs.items()]
         )
-
     target_logp = token_transfer(source_tokens, target_tokens, probs_struct)
     return target_logp
