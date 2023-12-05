@@ -1,7 +1,7 @@
 from typing import List, Tuple, Optional, Dict
 import numpy as np
 
-SPECIAL_TOKENS = {"<eos>"}
+SPECIAL_TOKENS = {"<eos>", "<bos>", "<|endoftext|>"}
 EMPTY_NODE_KEY = "<EMPTY>"
 
 
@@ -38,17 +38,20 @@ class TrieNode:
 
         indent_string = "|".join([" " * indent for indent in indents])
         info_string = f"{self.prob:.4f}" if self.prob is not None else ""
-        char_string = self.char
+        char_string = str(self.char)
         if self.char == "\n":
             char_string = "\\n"
+        if self.char == ' ':
+            char_string = "' '"
         print(indent_string + f"{char_string} {info_string}")
 
         indents = indents[:]
+        width = 1
         if flag:
-            indents.append(1)
+            indents.append(width)
         else:
-            indents[-1] += 2
-        for child in self.children.values():
+            indents[-1] += 1 + width
+        for child in sorted(self.children.values(), key=lambda x: -(x.prob or 0)):
             child.pprint_node(indents, len(self.children) > 1)
 
     def __contains__(self, string: str) -> bool:
@@ -110,18 +113,18 @@ def _add_probs(root: TrieNode, probs: List[Tuple[str, float]]):
         _add_probs(root.children[char], cut_subset)
 
 
-def _fold_empty_nodes(node: TrieNode):
+def _fold_trivial_empty_nodes(node: TrieNode):
     if EMPTY_NODE_KEY in node.children:
         empty_node = node.children[EMPTY_NODE_KEY]
         empty_node_prob = empty_node.prob
         assert empty_node_prob is not None
-        for key, child in empty_node.children.items():
-            assert key not in node.children and child.prob is not None
-            node.add_child(child)
-            child.prob *= empty_node_prob
-        del node.children[EMPTY_NODE_KEY]
+        if empty_node_prob == 1.0:
+            for key, child in empty_node.children.items():
+                assert key not in node.children and child.prob is not None
+                node.add_child(child)
+            del node.children[EMPTY_NODE_KEY]
     for child in node.children.values():
-        _fold_empty_nodes(child)
+        _fold_trivial_empty_nodes(child)
 
 
 def _combine_tries(
@@ -140,27 +143,16 @@ def _combine_tries(
         cur = leaf
 
 
-def token_transfer(
-    source_tokens: List[str],
-    target_tokens: List[str],
-    all_probs: List[List[Tuple[str, float]]],
-) -> List[float]:
-    """
-    Returns logprobs for every target token.
-    """
-    assert "".join(source_tokens) == "".join(target_tokens)
-    string = "".join(source_tokens)
-    assert len(all_probs) == len(source_tokens) - 1
-    print("Source tokens", "|".join(source_tokens))
-    print("Target tokens", "|".join(target_tokens))
-    print(f"{string=}")
-
+def build_logmass_trie(
+        source_tokens: List[str],
+        all_probs:List[List[Tuple[str, float]]]
+) -> TrieNode:
     root = TrieNode()
     root.add_string(source_tokens[0])
     _add_probs(root, [(source_tokens[0], 1.0)])
 
     # Make tries out of each top-k tokens.
-    tries = []
+    tries: List[TrieNode] = []
     for i, token_probs in enumerate(all_probs):
         tokens = [tp[0] for tp in token_probs]
         assert any(token == source_tokens[i + 1] for token in tokens)
@@ -172,51 +164,53 @@ def token_transfer(
         tries.append(trie)
 
     _combine_tries(root, tries, source_tokens)
-    _fold_empty_nodes(root)
+    _fold_trivial_empty_nodes(root)
+    return root
 
-    root.pprint_node()
+
+def token_transfer(
+    source_tokens: List[str],
+    target_tokens: List[str],
+    all_probs: List[List[Tuple[str, float]]],
+    verbose=False,
+) -> List[float]:
+    """
+    Returns logprobs for every target token.
+    """
+    assert "".join(source_tokens) == "".join(target_tokens)
+    string = "".join(source_tokens)
+    assert len(all_probs) == len(source_tokens) - 1, 'Expect source tokens to include bos token'
+
+    root = build_logmass_trie(source_tokens, all_probs)
+    if verbose:
+        print("Source tokens", "|".join(source_tokens))
+        print("Target tokens", "|".join(target_tokens))
+        print(f"{string=}")
+        root.pprint_node()
 
     cur = root
     target_token_log_probs = []
-    for token in target_tokens:
+    for i, token in enumerate(target_tokens):
         log_p = 0.0
         for s in _chars_or_special(token):
-            cur = cur.children[s]
+            if s in cur.children:
+                cur = cur.children[s]
+            else:
+                log_p += cur.children[EMPTY_NODE_KEY].log_prob
+                cur = cur.children[EMPTY_NODE_KEY].children[s]
             assert cur.log_prob is not None
             log_p += cur.log_prob
+        if EMPTY_NODE_KEY in cur.children:
+            if i == len(target_tokens) - 1 or _chars_or_special(target_tokens[i+1])[0] not in cur.children:
+                cur = cur.children[EMPTY_NODE_KEY]
+                log_p += cur.log_prob
         target_token_log_probs.append(log_p)
     return target_token_log_probs
 
 
-def test():
-    source_tokens = ["whe", "rever", "_cou", "ld", "<eos>"]
-    target_tokens = ["wh", "er", "ever", "_co", "uld", "<eos>"]
-    probs = [
-        [("rever", 0.4), ("never", 0.2), ("re", 0.2), ("lp", 0.05), ("lm", 0.05)],
-        [("_cou", 0.2), ("_can", 0.1), ("_will", 0.05), ("_shall", 0.05)],
-        [("ld", 0.8), ("ldve", 0.1), ("th", 0.025), ("pe", 0.05), ("nt", 0.025)],
-        [
-            ("<eos>", 0.75),
-            ("_have", 0.1),
-            ("_you", 0.05),
-            ("_your", 0.05),
-            ("'nt", 0.05),
-        ],
-    ]
-    source_log_probs = [0.0]
-    for i, source_token_probs in enumerate(probs):
-        source_token = source_tokens[i + 1]
-        stp = [st[1] for st in source_token_probs if st[0] == source_token]
-        assert len(stp) == 1
-        source_log_probs.append(np.log(stp[0]))
-    target_token_log_probs = token_transfer(source_tokens, target_tokens, probs)
-    assert np.allclose(np.sum(target_token_log_probs), np.sum(source_log_probs))
-
-
-def from_openai(response_logprobs, target_tokens):
-    # add implicit bos token
-    source_tokens: List[str] = ["bos"] + response_logprobs["tokens"]
-    target_tokens = ["bos"] + target_tokens[:]
+def from_openai(response_logprobs, target_tokens: List[str]) -> List[float]:
+    source_tokens: List[str] = ["<bos>"] + response_logprobs["tokens"]
+    target_tokens = ["<bos>"] + target_tokens[:]
     probs_struct: List[List[Tuple[str, float]]] = []
     for response_token_logprobs in response_logprobs["top_logprobs"]:
         probs_struct.append(
@@ -224,68 +218,4 @@ def from_openai(response_logprobs, target_tokens):
         )
 
     target_logp = token_transfer(source_tokens, target_tokens, probs_struct)
-    print(np.sum(target_logp))
-    print(np.sum(response_logprobs["token_logprobs"]))
     return target_logp
-
-
-if __name__ == "__main__":
-    data = {
-        "tokens": ["\n\n", "This", " is", " a", " test", "."],
-        "token_logprobs": [
-            -0.86915743,
-            -0.35828337,
-            -0.008103862,
-            -0.00550173,
-            -0.0014032064,
-            -0.06300423,
-        ],
-        "top_logprobs": [
-            {
-                "\n\n": -0.86915743,
-                "\n": -1.5560223,
-                " string": -3.156324,
-                " sentence": -3.2896361,
-                " of": -3.7075934,
-            },
-            {
-                "This": -0.35828337,
-                "\n": -1.847051,
-                "\n\n": -3.0329373,
-                " This": -4.944918,
-                "I": -4.9773717,
-            },
-            {
-                " is": -0.008103862,
-                " sentence": -5.2877955,
-                "\n": -7.06451,
-                " statement": -7.886844,
-                "\n\n": -8.535557,
-            },
-            {
-                " a": -0.00550173,
-                " just": -6.2743807,
-                " an": -6.3107214,
-                " only": -7.745223,
-                " not": -8.000508,
-            },
-            {
-                " test": -0.0014032064,
-                " sentence": -7.599525,
-                " ": -8.814065,
-                " te": -8.949878,
-                " sample": -9.242383,
-            },
-            {
-                ".": -0.06300423,
-                ".\n": -3.285281,
-                "<|endoftext|>": -4.3656716,
-                " ": -5.737307,
-                ",": -5.822476,
-            },
-        ],
-        "text_offset": [18, 20, 24, 27, 29, 34],
-    }
-
-    target_tokens = ["\n\nThis", " is a", " test."]
-    from_openai(data, target_tokens)
