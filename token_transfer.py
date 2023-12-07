@@ -1,4 +1,4 @@
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Optional, Dict, Set
 import numpy as np
 
 SPECIAL_TOKENS = {"<eos>", "<bos>", "<|endoftext|>"}
@@ -45,9 +45,9 @@ class TrieNode:
             indents = [0]
 
         indent_string = "|".join([" " * indent for indent in indents])
-        info_string = f"{self.prob:.4f}" if self.prob is not None else ""
+        info_string = f"{self.prob:.8f}" if self.prob is not None else ""
         char_string = {"\n": "\\n", "\t": "\\t", " ": "' '"}.get(
-            self.char, str(self.char)
+            str(self.char), str(self.char)
         )
         print(indent_string + f"{char_string} {info_string}")
         indents = indents[:]
@@ -194,6 +194,7 @@ def _fold_empty_nodes(node: TrieNode):
 
             for key, child in empty_node.children.items():
                 if key not in keys_to_merge:
+                    assert child.prob is not None
                     child.prob *= empty_node_prob
                     node.add_child(child)
         del node.children[EMPTY_NODE_KEY]
@@ -237,10 +238,117 @@ def build_prob_trie(
     return root
 
 
+def get_likelihood(node, prefix_token):
+    log_prob = 0.0
+    cur = node
+    probs = []
+    for s in _chars_or_special(prefix_token):
+        if s not in cur.children:
+            return 0
+        cur = cur.children[s]
+        probs.append(cur.prob)
+        log_prob += cur.log_prob
+    """
+    if log_prob < 0:
+        print(f'Found {prefix_token}')
+        node.pprint(depth=len(prefix_token)+1)
+        print(probs)
+        print(np.exp(log_prob))
+    """
+    return np.exp(log_prob)
+
+
+def _get_target_token_logprobs_from_trie(
+    target_tokens: List[str], root: TrieNode, target_vocab: Optional[Set[str]]
+) -> List[float]:
+    target_token_log_probs = []
+    cur = root
+    adjustments = []
+    adjustment_counts = []
+    for i, token in enumerate(target_tokens):
+        log_p = 0.0
+        for s in _chars_or_special(token):
+            if s in cur.children:
+                cur = cur.children[s]
+            else:
+                if EMPTY_NODE_KEY not in cur.children:
+                    cur.pprint(depth=6)
+                    raise AssertionError
+                log_p += cur.children[EMPTY_NODE_KEY].log_prob
+                cur = cur.children[EMPTY_NODE_KEY].children[s]
+            log_p += cur.log_prob
+
+        if target_vocab is not None:
+            # compute adjustment.
+            next_token = target_tokens[i+1] if i < len(target_tokens) - 1 else None
+            prefix_tokens = sorted(
+                [
+                    vocab_token[len(token) :]
+                    for vocab_token in set(target_vocab[i])
+                    if vocab_token.startswith(token) and vocab_token != token
+                    and not(next_token and next_token.startswith(vocab_token[len(token):]))
+                ],
+                key=lambda x: len(x),
+            )
+            likelihood = 0
+            found_tokens = []
+            for prefix_token in prefix_tokens:
+                tok_likelihood = get_likelihood(cur, prefix_token)
+                if tok_likelihood > 0:
+                    found_tokens.append((prefix_token, tok_likelihood))
+            to_remove = set()
+            for i, (found_token, _) in enumerate(found_tokens):
+                if i < len(found_tokens) - 1:
+                    for j in range(i+1, len(found_tokens)):
+                        if found_tokens[j][0].startswith(found_token):
+                            to_remove.add(j)
+            found_tokens = [found_tokens[i] for i in range(len(found_tokens)) if i not in to_remove]
+            found_tokens = [ft for ft in found_tokens if ft[0] != ' ' and not (next_token and next_token.startswith(ft[0]))]
+            adjustment_counts.append(len(found_tokens))
+            likelihood = sum(ft[1] for ft in found_tokens)
+            if likelihood != 0:
+                if likelihood < 0 or likelihood > 1:
+                    print([p[len(token) :] for p in prefix_tokens])
+                    cur.pprint(depth=10)
+                    print(found_tokens)
+                    raise AssertionError
+            if len(adjustments) == 14:
+                print('token', token)
+                print(f'{len(token)=}')
+                print('prefix tokens', prefix_tokens)
+                print('found tokens', found_tokens)
+                print('next token', next_token)
+                cur.pprint(depth=5)
+
+            adjustments.append(np.log(1 - likelihood))
+        target_token_log_probs.append(log_p)
+    
+    print(np.array(adjustments))
+    print(np.array(adjustment_counts))
+    if len(adjustments):
+        assert len(adjustments) == len(target_token_log_probs)
+        new_logprobs = []
+        for i in range(len(target_token_log_probs)):
+            new_logp = target_token_log_probs[i] + adjustments[i]
+            if i > 0:
+                new_logp -= adjustments[i - 1]
+            if new_logp > 0:
+                print()
+                print(f'logprobs[{i}] = {target_token_log_probs[i]} pr[i]={np.exp(target_token_log_probs[i])}')
+                print(f'adjustment={adjustments[i]}, previous adjustment={adjustments[i-1]}, adjustment_count={adjustment_counts[i]}')
+                print(adjustments[i-1])
+                raise ValueError()
+            new_logprobs.append(new_logp)
+        target_token_log_probs = new_logprobs
+
+    return target_token_log_probs
+
+
 def token_transfer(
     source_tokens: List[str],
     target_tokens: List[str],
     all_probs: List[List[Tuple[str, float]]],
+    target_vocab: Optional[Set[str]] = None,
     verbose=False,
 ) -> List[float]:
     """
@@ -275,36 +383,27 @@ def token_transfer(
     _fold_empty_nodes(root)
     if verbose:
         root.pprint()
-
-    target_token_log_probs = []
-    cur = root
-    for token in target_tokens:
-        log_p = 0.0
-        for s in _chars_or_special(token):
-            if s in cur.children:
-                cur = cur.children[s]
-            else:
-                if EMPTY_NODE_KEY not in cur.children:
-                    cur.pprint(depth=6)
-                    raise AssertionError
-                log_p += cur.children[EMPTY_NODE_KEY].log_prob
-                cur = cur.children[EMPTY_NODE_KEY].children[s]
-            log_p += cur.log_prob
-        target_token_log_probs.append(log_p)
-    return target_token_log_probs
+    return _get_target_token_logprobs_from_trie(target_tokens, root, target_vocab)
 
 
-def from_openai_response(
-    response_logprobs, target_tokens: List[str], verbose: bool = False
+def token_transfer_from_openai_response(
+    response_logprobs,
+    target_tokens: List[str],
+    verbose: bool = False,
+    target_vocab: Optional[Set[str]] = None,
 ) -> List[float]:
     source_tokens: List[str] = ["<bos>"] + response_logprobs["tokens"]
     target_tokens = ["<bos>"] + target_tokens[:]
     probs_struct: List[List[Tuple[str, float]]] = []
-    for response_token_logprobs in response_logprobs["top_logprobs"]:
+    for top_logprobs_at_token in response_logprobs["top_logprobs"]:
         probs_struct.append(
-            [(tok, np.exp(lp)) for tok, lp in response_token_logprobs.items()]
+            [(tok, np.exp(lp)) for tok, lp in top_logprobs_at_token.items()]
         )
     target_logp = token_transfer(
-        source_tokens, target_tokens, probs_struct, verbose=verbose
+        source_tokens,
+        target_tokens,
+        probs_struct,
+        target_vocab=target_vocab,
+        verbose=verbose,
     )
     return target_logp
