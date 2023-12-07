@@ -84,6 +84,16 @@ class TrieNode:
                 p = child
         p.is_word = True
 
+    def get_likelihood(self, sequence):
+        log_prob = 0.0
+        cur = self
+        for s in _chars_or_special(sequence):
+            if s not in cur.children:
+                return 0
+            cur = cur.children[s]
+            log_prob += cur.log_prob
+        return np.exp(log_prob)
+
     def get_string(self, string: str) -> "TrieNode":
         """
         Returns the leaf node of the trie representing the string.
@@ -238,24 +248,48 @@ def build_prob_trie(
     return root
 
 
-def get_likelihood(node, prefix_token):
-    log_prob = 0.0
-    cur = node
-    probs = []
-    for s in _chars_or_special(prefix_token):
-        if s not in cur.children:
-            return 0
-        cur = cur.children[s]
-        probs.append(cur.prob)
-        log_prob += cur.log_prob
-    """
-    if log_prob < 0:
-        print(f'Found {prefix_token}')
-        node.pprint(depth=len(prefix_token)+1)
-        print(probs)
-        print(np.exp(log_prob))
-    """
-    return np.exp(log_prob)
+def compute_adjustment(cur, token, next_token, target_vocab):
+    prefix_tokens = sorted(
+        [
+            vocab_token[len(token) :]
+            for vocab_token in target_vocab
+            if vocab_token.startswith(token)
+            and vocab_token != token
+            and not (next_token and next_token.startswith(vocab_token[len(token) :]))
+        ],
+        key=lambda x: len(x),
+    )
+    found_tokens = []
+    for prefix_token in prefix_tokens:
+        if (tok_likelihood := cur.get_likelihood(prefix_token)) > 0:
+            found_tokens.append((prefix_token, tok_likelihood))
+
+    # Remove prefixes
+    to_remove = set()
+    for j, (found_token, _) in enumerate(found_tokens):
+        if j < len(found_tokens) - 1:
+            for k in range(j + 1, len(found_tokens)):
+                if found_tokens[k][0].startswith(found_token):
+                    to_remove.add(k)
+    found_tokens = [
+        found_tokens[i] for i in range(len(found_tokens)) if i not in to_remove
+    ]
+
+    found_tokens = [
+        ft
+        for ft in found_tokens
+        if not (next_token is not None and ft[0].startswith(next_token))
+    ]
+    likelihood = sum(ft[1] for ft in found_tokens)
+
+    if likelihood < 0 or likelihood > 1:
+        print([p[len(token) :] for p in prefix_tokens])
+        cur.pprint(depth=10)
+        print(found_tokens)
+        raise AssertionError
+
+    adjustment = np.log(1 - likelihood)
+    return adjustment, len(found_tokens)
 
 
 def _get_target_token_logprobs_from_trie(
@@ -281,48 +315,10 @@ def _get_target_token_logprobs_from_trie(
         if target_vocab is not None:
             # compute adjustment.
             next_token = target_tokens[i + 1] if i < len(target_tokens) - 1 else None
-            prefix_tokens = sorted(
-                [
-                    vocab_token[len(token) :]
-                    for vocab_token in target_vocab
-                    if vocab_token.startswith(token)
-                    and vocab_token != token
-                    and not (
-                        next_token and next_token.startswith(vocab_token[len(token) :])
-                    )
-                ],
-                key=lambda x: len(x),
-            )
-            likelihood = 0
-            found_tokens = []
-            for prefix_token in prefix_tokens:
-                tok_likelihood = get_likelihood(cur, prefix_token)
-                if tok_likelihood > 0:
-                    found_tokens.append((prefix_token, tok_likelihood))
-            to_remove = set()
-            for j, (found_token, _) in enumerate(found_tokens):
-                if j < len(found_tokens) - 1:
-                    for k in range(j + 1, len(found_tokens)):
-                        if found_tokens[k][0].startswith(found_token):
-                            to_remove.add(k)
-            found_tokens = [
-                found_tokens[i] for i in range(len(found_tokens)) if i not in to_remove
-            ]
-            found_tokens = [
-                ft
-                for ft in found_tokens
-                if not (next_token is not None and ft[0].startswith(next_token))
-            ]
-            adjustment_counts.append(len(found_tokens))
-            likelihood = sum(ft[1] for ft in found_tokens)
+            adjustment, count = compute_adjustment(cur, token, next_token, target_vocab)
+            adjustments.append(adjustment)
+            adjustment_counts.append(count)
 
-            if likelihood < 0 or likelihood > 1:
-                print([p[len(token) :] for p in prefix_tokens])
-                cur.pprint(depth=10)
-                print(found_tokens)
-                raise AssertionError
-
-            adjustments.append(np.log(1 - likelihood))
         target_token_log_probs.append(log_p)
 
     if len(adjustments):
