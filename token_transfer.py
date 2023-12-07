@@ -281,14 +281,7 @@ def token_transfer(
     for token in target_tokens:
         log_p = 0.0
         for s in _chars_or_special(token):
-            if s in cur.children:
-                cur = cur.children[s]
-            else:
-                if EMPTY_NODE_KEY not in cur.children:
-                    cur.pprint(depth=6)
-                    raise AssertionError
-                log_p += cur.children[EMPTY_NODE_KEY].log_prob
-                cur = cur.children[EMPTY_NODE_KEY].children[s]
+            cur = cur.children[s]
             log_p += cur.log_prob
         target_token_log_probs.append(log_p)
     return target_token_log_probs

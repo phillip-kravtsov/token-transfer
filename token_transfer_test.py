@@ -121,7 +121,7 @@ class TestTokenTransfer(unittest.TestCase):
             return
         target_tokens = ["\n", "\n", "This is", " a", " test", "."]
         target_token_logp = tt.from_openai_response(
-            self.data_short, target_tokens, verbose=True
+            self.data_short, target_tokens, verbose=False
         )
         actual = self.data_short["token_logprobs"]
         expected = target_token_logp[1:]
