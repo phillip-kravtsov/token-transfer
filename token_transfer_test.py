@@ -15,7 +15,6 @@ class TestTokenTransfer(unittest.TestCase):
 
         return super().setUp()
 
-    @unittest.skip("")
     def test_token_transfer(self):
         source_tokens = ["whe", "rever", "_cou", "ld", "<eos>"]
         target_tokens = ["wh", "er", "ever", "_co", "uld", "<eos>"]
@@ -38,32 +37,19 @@ class TestTokenTransfer(unittest.TestCase):
             assert len(stp) == 1
             source_log_probs.append(np.log(stp[0]))
         target_token_log_probs = tt.token_transfer(source_tokens, target_tokens, probs)
-        assert np.allclose(target_token_log_probs[1:], source_log_probs)
+        assert np.allclose(sum(target_token_log_probs[1:]), sum(source_log_probs))
 
     def test_from_openai_identity(self):
-        # vocab = set().union(*self.data_long["top_logprobs"])
-        partial_vocab = [set(d.keys()) for d in self.data_long["top_logprobs"]]
+        vocab = set().union(*self.data_long["top_logprobs"])
         target_token_logp = tt.token_transfer_from_openai_response(
             self.data_long,
             self.data_long["tokens"],
-            target_vocab=[set()] + partial_vocab,
-        )
-        print(
-            [
-                sum([np.exp(v) for v in d.values()])
-                for d in self.data_long["top_logprobs"]
-            ]
+            target_vocab=vocab,
         )
         expected = np.array(self.data_long["token_logprobs"])
         actual = np.array(target_token_logp[1:])
-        print("DIFF IS")
-        diff = abs(np.exp(actual) - np.exp(expected))
-        diff[diff < 1e-6] = 0
-        print(diff)
-
         self.assertTrue(np.allclose(sum(expected), sum(actual)))
 
-    @unittest.skip("")
     def test_merging_simple_openai(self):
         target_token_logp = tt.token_transfer_from_openai_response(
             self.merge_data, self.merge_data["tokens"]
@@ -125,18 +111,7 @@ class TestTokenTransfer(unittest.TestCase):
         assert np.allclose(h.prob, (0.5 * 0.3 * 0.33) / (c.prob * a.prob))
         assert np.allclose(k.prob, (0.5 * 0.9 * 0.8 * 0.6) / (c.prob * a.prob))
 
-    @unittest.skip("")
     def test_from_openai(self):
-        if self.data_short["tokens"] != [
-            "\n\n",
-            "This",
-            " is",
-            " a",
-            " test",
-            ".",
-        ]:
-            print("this test depends on the inputs, skipping.")
-            return
         target_tokens = ["\n", "\n", "This is", " a", " test", "."]
         target_token_logp = tt.token_transfer_from_openai_response(
             self.data_short, target_tokens, verbose=False
@@ -145,18 +120,14 @@ class TestTokenTransfer(unittest.TestCase):
         expected = target_token_logp[1:]
         self.assertTrue(np.allclose(sum(actual[:-1]), sum(expected[:-1])))
 
-    @unittest.skip("")
     def test_from_openai_with_vocab(self):
         target_tokens = self.data_short["tokens"]
         vocab = set().union(*self.data_short["top_logprobs"])
-        print(vocab)
         target_token_logp = tt.token_transfer_from_openai_response(
             self.data_short, target_tokens, verbose=False, target_vocab=vocab
         )
         actual = self.data_short["token_logprobs"]
         expected = target_token_logp[1:]
-        print(actual)
-        print(expected)
         self.assertTrue(np.allclose(actual, expected))
 
 
