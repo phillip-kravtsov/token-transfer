@@ -280,13 +280,16 @@ def _get_target_token_logprobs_from_trie(
 
         if target_vocab is not None:
             # compute adjustment.
-            next_token = target_tokens[i+1] if i < len(target_tokens) - 1 else None
+            next_token = target_tokens[i + 1] if i < len(target_tokens) - 1 else None
             prefix_tokens = sorted(
                 [
                     vocab_token[len(token) :]
                     for vocab_token in set(target_vocab[i])
-                    if vocab_token.startswith(token) and vocab_token != token
-                    and not(next_token and next_token.startswith(vocab_token[len(token):]))
+                    if vocab_token.startswith(token)
+                    and vocab_token != token
+                    and not (
+                        next_token and next_token.startswith(vocab_token[len(token) :])
+                    )
                 ],
                 key=lambda x: len(x),
             )
@@ -299,11 +302,17 @@ def _get_target_token_logprobs_from_trie(
             to_remove = set()
             for i, (found_token, _) in enumerate(found_tokens):
                 if i < len(found_tokens) - 1:
-                    for j in range(i+1, len(found_tokens)):
+                    for j in range(i + 1, len(found_tokens)):
                         if found_tokens[j][0].startswith(found_token):
                             to_remove.add(j)
-            found_tokens = [found_tokens[i] for i in range(len(found_tokens)) if i not in to_remove]
-            found_tokens = [ft for ft in found_tokens if ft[0] != ' ' and not (next_token and next_token.startswith(ft[0]))]
+            found_tokens = [
+                found_tokens[i] for i in range(len(found_tokens)) if i not in to_remove
+            ]
+            found_tokens = [
+                ft
+                for ft in found_tokens
+                if ft[0] != " " and not (next_token and next_token.startswith(ft[0]))
+            ]
             adjustment_counts.append(len(found_tokens))
             likelihood = sum(ft[1] for ft in found_tokens)
             if likelihood != 0:
@@ -313,16 +322,16 @@ def _get_target_token_logprobs_from_trie(
                     print(found_tokens)
                     raise AssertionError
             if len(adjustments) == 14:
-                print('token', token)
-                print(f'{len(token)=}')
-                print('prefix tokens', prefix_tokens)
-                print('found tokens', found_tokens)
-                print('next token', next_token)
+                print("token", token)
+                print(f"{len(token)=}")
+                print("prefix tokens", prefix_tokens)
+                print("found tokens", found_tokens)
+                print("next token", next_token)
                 cur.pprint(depth=5)
 
             adjustments.append(np.log(1 - likelihood))
         target_token_log_probs.append(log_p)
-    
+
     print(np.array(adjustments))
     print(np.array(adjustment_counts))
     if len(adjustments):
@@ -334,9 +343,13 @@ def _get_target_token_logprobs_from_trie(
                 new_logp -= adjustments[i - 1]
             if new_logp > 0:
                 print()
-                print(f'logprobs[{i}] = {target_token_log_probs[i]} pr[i]={np.exp(target_token_log_probs[i])}')
-                print(f'adjustment={adjustments[i]}, previous adjustment={adjustments[i-1]}, adjustment_count={adjustment_counts[i]}')
-                print(adjustments[i-1])
+                print(
+                    f"logprobs[{i}] = {target_token_log_probs[i]} pr[i]={np.exp(target_token_log_probs[i])}"
+                )
+                print(
+                    f"adjustment={adjustments[i]}, previous adjustment={adjustments[i-1]}, adjustment_count={adjustment_counts[i]}"
+                )
+                print(adjustments[i - 1])
                 raise ValueError()
             new_logprobs.append(new_logp)
         target_token_log_probs = new_logprobs

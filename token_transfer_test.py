@@ -41,12 +41,19 @@ class TestTokenTransfer(unittest.TestCase):
         assert np.allclose(target_token_log_probs[1:], source_log_probs)
 
     def test_from_openai_identity(self):
-        #vocab = set().union(*self.data_long["top_logprobs"])
-        partial_vocab = [set(d.keys()) for d in self.data_long['top_logprobs']]
+        # vocab = set().union(*self.data_long["top_logprobs"])
+        partial_vocab = [set(d.keys()) for d in self.data_long["top_logprobs"]]
         target_token_logp = tt.token_transfer_from_openai_response(
-            self.data_long, self.data_long["tokens"], target_vocab=[set()] + partial_vocab
+            self.data_long,
+            self.data_long["tokens"],
+            target_vocab=[set()] + partial_vocab,
         )
-        print([sum([np.exp(v) for v in d.values()]) for d in self.data_long['top_logprobs']])
+        print(
+            [
+                sum([np.exp(v) for v in d.values()])
+                for d in self.data_long["top_logprobs"]
+            ]
+        )
         expected = np.array(self.data_long["token_logprobs"])
         actual = np.array(target_token_logp[1:])
         print("DIFF IS")
@@ -137,6 +144,7 @@ class TestTokenTransfer(unittest.TestCase):
         actual = self.data_short["token_logprobs"]
         expected = target_token_logp[1:]
         self.assertTrue(np.allclose(sum(actual[:-1]), sum(expected[:-1])))
+
     @unittest.skip("")
     def test_from_openai_with_vocab(self):
         target_tokens = self.data_short["tokens"]
